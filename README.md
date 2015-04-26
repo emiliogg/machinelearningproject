@@ -1,5 +1,5 @@
 # machinelearningproject
-Prediction Assignment Writeup
+Prediction Assignment Writeup 
 
 Here you can find the R mark down file and the html. To evaluate the html file you have 2 options:
 
