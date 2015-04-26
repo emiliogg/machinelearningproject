@@ -1,0 +1,133 @@
+---
+title: "Practical Machine Learning Project"
+author: Emilio Gonzalez Gonzalez
+output: html_document
+---
+
+## Abstract
+The goal of this project (classification problem) is to build a traning model that predicts the way different subjects performed a fitness exercice (the quality of execution). As source we have a large collection of activity monitors input data, along with other variables and the correponding outcome: the way the subject did the exercice among five possible options (the right one and four common mistakes). The training data can be found at [Input Data](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv) and the test data in [Test Data](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv). For the test data we don't know the way the subjects performed the exercice and we need to figure it out using the machine learning algorithm of our choice conveniently trained.
+
+## Methodology
+### Data split
+The initial training data set will be split into two subsets: a proper training set (75% of the data) and a validation set (25% of the data). The model will be build using only the first subset (training). The out of sample error will be estimated using only the validation subset; comparing predicted outcomes by the model with the real ones (that are present in the data).
+
+### Model Selection
+The random forest method has been choosen (**caret** package) because it incorporates the **cross-validation** procedure as an option and provides multiple tuning parameters for the train function.
+
+### Exploratory Data Analysis
+An initial data analysis phase has been carried out to see the distribution of outcomes, the NA values, the empty variables and other data characteristics. As a conclusion we confirm that we have enought data for each possible ```classe``` outcome. We also have identified variables not directly related with our task. As a result, the number of possible predictors have been considerably reduced:
+
+* all the variables with some rows with NA of empty values have been removed, 
+* the initial seven variables have been removed as they were not related to the sensors (it is important to notice that the subyacent idea is to predict using data provided or derived from the sensors). 
+
+After this process only 52 variables out of 159 have been retained as predictors.
+
+```{r warning=FALSE, message=FALSE}
+library(caret)
+library(doParallel)
+library(foreach)
+
+# Use parallelism for speed
+registerDoParallel(detectCores()) 
+```
+Another approach to identify covariates that could be discarted will be to use the ```nearZeroVar()``` function using the original dataframe ```dfTraining``` as argument (this dataframe inlcudes the outcome and the other 159 variables). Running this function we obtain `r length(nearZeroVar(dfTraining))` variables to eliminate. I have opted for the previosly described method as achieved less predictors (and all of them were retained by the ```nearZeroVar(df)``` (that equals to `r length(nearZeroVar(df))` when we use the already reduced set of 52 variables).
+
+Note. For performance issues parallelism is used in case the computer has multiples cores available.
+
+## Reading Training and Testing Files
+```{r warning=FALSE, message=FALSE}
+nfileT <- "pml-training.csv"
+nfileV <- "pml-testing.csv"
+dfTraining  <- read.csv(nfileT, header=TRUE)
+dfTest      <- read.csv(nfileV, header=TRUE)
+
+# Remove all columns that have some NA or spaces and the 7 first variables
+df    <- dfTraining[ , ! apply( dfTraining , 2 , function(x) any(is.na(x) | x=="") ) ]
+df    <- df[,!(names(df) %in% names(df)[1:7])]
+# Count the number of casses of each outcome (variable classe)
+table(df$classe)
+```
+## Fitting the model
+### Model selection: random forest and cross-validation.
+For theorical reasons (mainly model accuracy) and for the nature of the problem, a random forest algorithm has been selected. 
+
+### Tuning the model
+This model fitting is very demanding in computational terms for the data we have (`r nrow(dfTraining)` rows and `r ncol(dfTraining)` columns), meaning long waiting times (several hours) with standard parameters. 
+Hence in the initial phase of analysis only a random reduced subset of the data was used to evaluate the different parameters (1000 cases). The parameters that have been tested are the number of trees, k-folds and repetitions. Also different percentajes of data split between training and alidation were tested.
+
+
+```{r warning=FALSE, message=FALSE}
+# Parameters
+training_p   <- 0.75
+number_trees <- 50
+number_folds <- 10
+number_reps  <- 10
+
+```
+After testing different combinations using the 1000 rows reduced sample of data, the complete dataset has been analyzed with only the best combinations of parameters. Finally the choosen model has been a random forest training model with `r number_trees` trees, using cross-validation `r number_folds` k-folds and `r number_reps` repetitions. It provides a quick response considering it also provides simmilar out of sample error that models with a lot more of trees and repetitions. 
+
+```{r warning=FALSE, message=FALSE}
+# From the trainig set, split data in two groups: model training and validation
+set.seed(123)
+inTraining <- createDataPartition(df$classe, p=training_p, list=FALSE)
+dfT  <- df[ inTraining,]
+dfV  <- df[-inTraining,]
+
+# Train the model
+train_control <- trainControl(method="repeatedcv", number=number_folds, repeats=number_reps, allowParallel=TRUE)
+comp_time <- system.time(
+        model <- train(classe~., data=dfT, method="rf", trControl=train_control, ntree=number_trees))
+
+```
+## Model Analysis 
+The model prooved to be relatively quick (`r comp_time[[3]]` seconds with these parameters). Just to see if accuracy could be improved (even at the expense of computation time) the model has been evaluated with more trees and repetitions obtaining very similar out of sample estimated error (and same predictions for the test cases) and of course a substantial increase in computation time. The conclussion is that the parameters choosen are a good compromise even if other sets could be used.
+
+In the next part the basic model characteristics are summarized as computed by the algorithm. We can see that accuracy reaches 99%. Also it is interesting to see that not all the 52 variables are needed and we could perform a more in deep analysis to reduce them to less than 30 with simmilar accuracy results.
+
+Also we see that the decision of using only 50 trees (10 times less than the default of 500) seems reasonable as reaching certain limit above that number the benefit increasing it is marginal and can lead to overfitting.
+
+```{r warning=FALSE, message=FALSE}
+model
+model$finalModel
+plot(model)
+plot(model$finalModel)
+legend("topright", legend=unique(dfV$classe), col=unique(as.numeric(dfV$classe)), pch=19)
+```
+
+The most important variables used by the model follow:
+```{r warning=FALSE, message=FALSE}
+varImp(model)
+```
+
+## Error Estimate and results
+### Contingency Table for In Sample Error
+All the cases were perfectly classified in that case.
+```{r warning=FALSE, message=FALSE}
+table(predict(model, newdata=dfT), dfT$classe)
+```
+### Contingency Table for Out of Sample Error. Accuracy.
+```{r warning=FALSE, message=FALSE}
+prediction <- predict(model, newdata=dfV)
+table(prediction, dfV$classe)
+```
+In that case we can see only a few cases are misclassified (as expected by the previous contrasted measures of the model). Accuracy in verification data is very high: **`r  1-sum(prediction != dfV$classe)/nrow(dfV)`**.
+
+### Prediction for the testing data set
+```{r warning=FALSE, message=FALSE}
+res <- predict(model, newdata=dfTest)
+res
+```
+
+```{r echo=FALSE,  warning=FALSE, message=FALSE, }
+# Write output
+pml_write_files = function(x){
+    n = length(x)
+    for(i in 1:n){
+        filename = paste0("problem_id_",i,".txt")
+        write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+    }
+}
+pml_write_files(res)
+
+```
+
